@@ -141,26 +141,19 @@ class Provider {
             if (!response.ok) return [];
             const body = await response.text();
 
-            const startMatch = body.match(/"images"\s*:\s*\[/);
-            if (!startMatch) {
-                console.error("Images array not found");
+            const regex = /["\\]*images["\\]*\s*:\s*(\[[\s\S]*?\])/;
+
+            const match = body.match(regex);
+            if (!match || !match[1]) {
+                console.error("Images regex NOT matched");
                 return [];
             }
 
-            const startIdx = body.indexOf(startMatch[0]) + startMatch[0].length - 1;
-            let depth = 1, endIdx = startIdx + 1;
-            while (depth > 0 && endIdx < body.length) {
-                if (body[endIdx] === '[') depth++;
-                if (body[endIdx] === ']') depth--;
-                endIdx++;
-            }
-            const imagesJson = body.slice(startIdx, endIdx);
-
             let images = [];
             try {
-                images = JSON.parse(imagesJson);
+                images = JSON.parse(match[1]);
             } catch {
-                const clean = imagesJson.replace(/\\"/g, '"');
+                const clean = match[1].replace(/\\"/g, '"');
                 images = JSON.parse(clean);
             }
 
