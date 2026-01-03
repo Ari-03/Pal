@@ -33,7 +33,7 @@ class Provider {
             let mangas = [];
 
             items.forEach((item) => {
-                const compositeId = `${item.hash_id}|${item.slug}`;
+                const compositeId = `${item.hash_id}:::${item.slug}`;
 
                 let imageUrl = '';
                 if (item.poster) {
@@ -61,14 +61,15 @@ class Provider {
      * Finds all chapters 
      */
     async findChapters(mangaId) {
-        const [hashId, slug] = mangaId.split('|');
+        const separator = mangaId.includes(':::') ? ':::' : '|';
+        const [hashId, slug] = mangaId.split(separator);
         if (!hashId || !slug) return [];
 
         const baseUrl = `${this.apiUrl}/manga/${hashId}/chapters?order[number]=desc&limit=100`;
 
         try {
-            // First page request
             const firstRes = await fetch(baseUrl);
+            if (!firstRes.ok) return [];
             const firstData = await firstRes.json();
 
             if (!firstData.result || !firstData.result.items) return [];
@@ -77,20 +78,22 @@ class Provider {
 
             let allChapters = [...firstData.result.items];
 
-            // Fetch remaining pages
+            const pagePromises = [];
             for (let page = 2; page <= totalPages; page++) {
                 const pageUrl = `${baseUrl}&page=${page}`;
-                const res = await fetch(pageUrl);
-                const data = await res.json();
-
-                if (data.result?.items?.length > 0) {
-                    allChapters.push(...data.result.items);
-                }
+                pagePromises.push(
+                    fetch(pageUrl)
+                        .then(res => res.ok ? res.json() : null)
+                        .then(data => data?.result?.items || [])
+                        .catch(() => [])
+                );
             }
+            const pageResults = await Promise.all(pagePromises);
+            pageResults.forEach(items => allChapters.push(...items));
 
             // Map chapters with proper title & scanlator
             let chapters = allChapters.map((item) => {
-                const compositeChapterId = `${hashId}|${slug}|${item.chapter_id}|${item.number}`;
+                const compositeChapterId = `${hashId}:::${slug}:::${item.chapter_id}:::${item.number}`;
 
                 // Chapter title rules
                 const chapterTitle = item.name && item.name.trim().length > 0
@@ -111,8 +114,7 @@ class Provider {
                 };
             });
 
-            // Sort ascending by chapter number (index 0 = first chapter)
-            chapters.sort((a, b) => parseFloat(a.chapter) - parseFloat(b.chapter));
+            chapters.sort((a, b) => (parseFloat(a.chapter) || 0) - (parseFloat(b.chapter) || 0));
             chapters.forEach((chapter, i) => (chapter.index = i));
 
             return chapters;
@@ -127,7 +129,8 @@ class Provider {
      * Finds all image pages.
      */
     async findChapterPages(chapterId) {
-        const parts = chapterId.split('|');
+        const separator = chapterId.includes(':::') ? ':::' : '|';
+        const parts = chapterId.split(separator);
         if (parts.length < 4) return [];
 
         const [hashId, slug, specificChapterId, number] = parts;
@@ -135,33 +138,43 @@ class Provider {
 
         try {
             const response = await fetch(url);
+            if (!response.ok) return [];
             const body = await response.text();
 
-            // Matches: "images":[...], \"images\": [...], ,"images":[...], etc.
-            const regex = /["\\]*images["\\]*\s*:\s*(\[[^\]]*\])/s;
-
-            const match = body.match(regex);
-            if (!match || !match[1]) {
-                console.error("Images regex NOT matched");
+            const startMatch = body.match(/"images"\s*:\s*\[/);
+            if (!startMatch) {
+                console.error("Images array not found");
                 return [];
             }
 
-            let images = [];
+            const startIdx = body.indexOf(startMatch[0]) + startMatch[0].length - 1;
+            let depth = 1, endIdx = startIdx + 1;
+            while (depth > 0 && endIdx < body.length) {
+                if (body[endIdx] === '[') depth++;
+                if (body[endIdx] === ']') depth--;
+                endIdx++;
+            }
+            const imagesJson = body.slice(startIdx, endIdx);
 
+            let images = [];
             try {
-                images = JSON.parse(match[1]);
+                images = JSON.parse(imagesJson);
             } catch {
-                const clean = match[1].replace(/\\"/g, '"');
+                const clean = imagesJson.replace(/\\"/g, '"');
                 images = JSON.parse(clean);
             }
 
-            return images.map((img, index) => ({
-                url: img.url,
-                index,
-                headers: {
-                    Referer: url,
-                },
-            }));
+            if (!Array.isArray(images)) return [];
+
+            return images
+                .filter((img) => img && img.url)
+                .map((img, index) => ({
+                    url: img.url,
+                    index,
+                    headers: {
+                        Referer: url,
+                    },
+                }));
         }
         catch (e) {
             console.error(e);
