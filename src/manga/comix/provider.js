@@ -111,8 +111,8 @@ class Provider {
                 };
             });
 
-            // Sort descending by chapter number
-            chapters.sort((a, b) => parseFloat(b.chapter) - parseFloat(a.chapter));
+            // Sort ascending by chapter number (index 0 = first chapter)
+            chapters.sort((a, b) => parseFloat(a.chapter) - parseFloat(b.chapter));
             chapters.forEach((chapter, i) => (chapter.index = i));
 
             return chapters;
